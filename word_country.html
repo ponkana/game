@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>国名ワードクラウドクイズ</title>
+  <style>
+  :root {
+    --main-color: #2c3e50;
+    --accent-color: #3498db;
+    --bg-color: #f4f7f9;
+    --font-color: #333;
+    --card-bg: #ffffff;
+    --border-color: #ddd;
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-image: url(https://onwa-illust.com/wp-content/uploads/2020/06/national-flag-768x768.png);
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: center;
+    opacity: 0.8;
+    z-index: -1;
+  }
+
+
+  body {
+    font-family: 'Segoe UI', sans-serif;
+    background-color: var(--bg-color);
+    margin: 0;
+    padding: 0;
+    color: var(--font-color);
+  }
+
+  #main {
+    max-width: 900px;
+    margin: 0px auto;
+    background: var(--card-bg);
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    padding: 10px 10px;
+    text-align: center;
+    background-color: rgba(255, 255, 255, 0.9);
+  }
+
+  h2 {
+    color: var(--main-color);
+    margin-bottom: 10px;
+  }
+
+  #wordcloud {
+    width: 450px;
+    height: 300px;
+    margin: 0 auto;
+    border: 1px solid var(--border-color);
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.05);
+  }
+
+  #choices {
+    margin-top: 30px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 15px;
+  }
+
+  .choice-button {
+    background-color: var(--accent-color);
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+  }
+
+  .choice-button:hover {
+    background-color: #217dbb;
+  }
+
+  #result {
+    margin-top: 10px;
+    font-size: 1.2em;
+    font-weight: bold;
+  }
+
+  #nextBtn {
+    margin-top: 25px;
+    background-color: white;
+    border: 2px solid var(--accent-color);
+    color: var(--accent-color);
+    padding: 10px 18px;
+    font-size: 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+
+  #nextBtn:hover {
+    background-color: var(--accent-color);
+    color: white;
+  }
+
+  @media (max-width: 800px) {
+    #wordcloud {
+      width: 90%;
+      height: 300px;
+    }
+
+    .choice-button {
+      font-size: 0.9rem;
+      padding: 10px 16px;
+    }
+  }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/wordcloud@1.1.0/src/wordcloud2.js"></script>
+  <script src="https://unpkg.com/kuromoji@0.1.2/build/kuromoji.js"></script>
+</head>
+<body>
+  <div id="main">
+    <h2>この国はどこでしょう？</h2>
+    <canvas id="wordcloud"></canvas>
+    <div id="choices"></div>
+    <div id="result"></div>
+    <button id="nextBtn" onclick="nextQuestion()">次の問題へ</button>
+  </div>
+
+  <script>
+    let countryTitles = [];
+    let randomCountry = "";
+
+    async function fetchCountryTitles() {
+      const url = "https://ja.wikipedia.org/w/api.php?action=parse&page=国の一覧&format=json&origin=*";
+      const res = await fetch(url);
+      const data = await res.json();
+      const html = data.parse.text["*"];
+      const div = document.createElement("div");
+      div.innerHTML = html;
+
+      const imageBorders = div.querySelectorAll(".mw-image-border");
+      const titles = new Set();
+      imageBorders.forEach(span => {
+        const link = span.closest("td")?.querySelector("b > a[title]");
+        if (link &&
+            link.title &&
+            !link.title.includes("の旗") &&
+            !link.title.includes("一覧") &&
+            !link.title.includes("語") &&
+            !link.title.includes("に関する記事")) {
+          titles.add(link.title);
+        }
+      });
+      countryTitles = Array.from(titles);
+      loadQuestion();
+    }
+
+    function pickRandomCountry() {
+      randomCountry = countryTitles[Math.floor(Math.random() * countryTitles.length)];
+    }
+
+    function fetchWikipediaContent(title) {
+      const url = `https://ja.wikipedia.org/w/api.php?action=query&format=json&origin=*&prop=extracts&explaintext=true&titles=${encodeURIComponent(title)}`;
+      return fetch(url)
+        .then(res => res.json())
+        .then(data => {
+          const pages = data.query.pages;
+          const pageId = Object.keys(pages)[0];
+          if (pageId === "-1") throw new Error("ページが見つかりません");
+          return pages[pageId].extract;
+        });
+    }
+
+    function tokenizeJapanese(text, callback) {
+      kuromoji.builder({ dicPath: "https://unpkg.com/kuromoji@0.1.2/dict/" }).build(function (err, tokenizer) {
+        if (err) throw err;
+        const tokens = tokenizer.tokenize(text);
+        const nouns = tokens.filter(t => t.pos === "名詞" && t.surface_form.length > 1 && !/\d/.test(t.surface_form));
+        const wordFreq = {};
+        nouns.forEach(n => {
+          wordFreq[n.surface_form] = (wordFreq[n.surface_form] || 0) + 1;
+        });
+        const list = Object.entries(wordFreq).map(([w, f]) => [w, f * 5]);
+        callback(list);
+      });
+    }
+
+    function renderWordCloud(words) {
+      WordCloud(document.getElementById("wordcloud"), {
+        list: words,
+        gridSize: 8,
+        weightFactor: 2,
+        fontFamily: 'sans-serif',
+        color: 'random-dark',
+        rotateRatio: 0.5,
+        backgroundColor: '#fff'
+      });
+    }
+
+    function displayChoices() {
+      const choicesContainer = document.getElementById("choices");
+      choicesContainer.innerHTML = "";
+      const options = new Set([randomCountry]);
+      while (options.size < 5) {
+        const rand = countryTitles[Math.floor(Math.random() * countryTitles.length)];
+        options.add(rand);
+      }
+      const shuffled = Array.from(options).sort(() => Math.random() - 0.5);
+      shuffled.forEach(title => {
+        const btn = document.createElement("button");
+        btn.className = "choice-button";
+        btn.textContent = title;
+        btn.onclick = () => checkAnswer(title);
+        choicesContainer.appendChild(btn);
+      });
+    }
+
+    function checkAnswer(guess) {
+      const result = document.getElementById("result");
+      if (guess === randomCountry) {
+        result.textContent = "正解！🎉";
+        result.style.color = "green";
+      } else {
+        result.textContent = `不正解。正解は「${randomCountry}」です。`;
+        result.style.color = "red";
+      }
+    }
+
+    function nextQuestion() {
+      document.getElementById("result").textContent = "";
+      loadQuestion();
+    }
+
+    function loadQuestion() {
+      pickRandomCountry();
+      fetchWikipediaContent(randomCountry).then(text => {
+        tokenizeJapanese(text, renderWordCloud);
+        displayChoices();
+      }).catch(err => {
+        document.getElementById("wordcloud").textContent = "ワードクラウドの生成に失敗しました。";
+        console.error(err);
+      });
+    }
+
+    fetchCountryTitles();
+  </script>
+</body>
+</html>
